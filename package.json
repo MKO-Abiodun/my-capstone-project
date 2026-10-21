@@ -1,0 +1,10 @@
+{
+    "name" : "my-capstone-project",
+    "version" : "1.0.0",
+    "type" : "module",
+    "scripts": {
+        "demo" : "node scripts/demo.js",
+        "benchmark" : "node scripts/benchmark-lookup.js"
+
+    }
+}
