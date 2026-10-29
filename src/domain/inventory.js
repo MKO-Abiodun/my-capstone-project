@@ -1,107 +1,132 @@
 import { DomainError } from './errors.js';
-import { newId, newReference } from './ids.js';
-import { WaitlistQueue } from './waitlistQueue.js';
+
+function isValidDateString(str) {
+  const d = new Date(str);
+  return !isNaN(d.getTime());
+}
 
 export function createStore() {
   return {
     events: new Map(),
-    bookings: new Map(),
-    bookingsByRef: new Map(),
+    tiers: new Map(),
+    bookings: new Map()
   };
 }
 
-export function createEvent(store, { name, totalSeats } = {}) {
-  if (!name) throw new DomainError('VALIDATION', 'Event name required');
+export function createEvent(store, { title, city, venue, date }) {
+  if (!title || !title.trim() || !city || !city.trim() || !isValidDateString(date)) {
+    throw new DomainError('Invalid event data', 'VALIDATION');
+  }
+  const id = `evt_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
   const event = {
-    id: newId(),
-    name,
-    totalSeats: totalSeats ?? 100,
-    tiers: [],
-    waitlist: new WaitlistQueue(),
+    id,
+    title: title.trim(),
+    city: city.trim(),
+    venue: venue ? venue.trim() : '',
+    date: new Date(date).toISOString(),
+    status: 'draft',
+    tierIds: []
   };
-  store.events.set(event.id, event);
+  store.events.set(id, event);
   return event;
 }
 
-export function addTier(event, { name, capacity, priceCents, price } = {}) {
-  const finalPriceCents = priceCents ?? price;
-  if (!name) throw new DomainError('VALIDATION', 'Tier name required');
-  if (capacity == null || capacity <= 0) throw new DomainError('VALIDATION', 'Invalid capacity');
-  if (finalPriceCents == null) throw new DomainError('VALIDATION', 'priceCents required');
-  const tier = {
-    id: newId(),
-    name,
-    capacity,
-    priceCents: finalPriceCents,
-    sold: 0,
-    get seatsLeft() {
-      return this.capacity - this.sold;
-    }
+export function addTier(store, eventId, { name, priceCents, capacity, price, capacity: cap }) {
+  const event = store.events.get(eventId);
+  if (!event) throw new DomainError('Event not found', 'NOT_FOUND');
+  
+  const finalPrice = priceCents ?? price;
+  const finalCap = capacity ?? cap;
+
+  if (!Number.isInteger(finalPrice) || finalPrice < 0) {
+    throw new DomainError('Invalid price', 'VALIDATION');
+  }
+  if (!Number.isInteger(finalCap) || finalCap < 1) {
+    throw new DomainError('Invalid capacity', 'VALIDATION');
+  }
+  const tierId = `tier_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+  const tier = { 
+    id: tierId, 
+    eventId, 
+    name: name || 'General', 
+    priceCents: finalPrice, 
+    price: finalPrice,
+    capacity: finalCap, 
+    sold: 0 
   };
-  event.tiers.push(tier);
+  store.tiers.set(tierId, tier);
+  event.tierIds.push(tierId);
   return tier;
 }
 
-function getQty(qtyOrObj) {
-  if (typeof qtyOrObj === 'object' && qtyOrObj !== null) {
-    return qtyOrObj.quantity ?? qtyOrObj.qty ?? qtyOrObj.count;
+export function publishEvent(store, eventId) {
+  const event = store.events.get(eventId);
+  if (!event) throw new DomainError('Event not found', 'NOT_FOUND');
+  if (!event.tierIds || event.tierIds.length === 0) {
+    throw new DomainError('Event has no tiers', 'INVALID_STATE');
   }
-  return qtyOrObj;
+  event.status = 'published';
+  return event;
 }
 
-export function bookTickets(store, eventId, tierId, qtyOrObj) {
-  const qty = getQty(qtyOrObj);
-  if (qty == null || qty < 1 || qty > 10) {
-    throw new DomainError('VALIDATION', 'Must book 1-10 tickets');
-  }
+export function unpublishEvent(store, eventId) {
   const event = store.events.get(eventId);
-  if (!event) throw new DomainError('EVENT_NOT_FOUND', 'Event not found');
-  const tier = event.tiers.find(t => t.id === tierId);
-  if (!tier) throw new DomainError('TIER_NOT_FOUND', 'Tier not found');
-  if (tier.sold + qty > tier.capacity) {
-    throw new DomainError('SOLD_OUT', 'Sold out');
+  if (!event) throw new DomainError('Event not found', 'NOT_FOUND');
+  event.status = 'draft';
+  return event;
+}
+
+export function listEventSummaries(store, { publishedOnly = true } = {}) {
+  const summaries = [];
+  for (const event of store.events.values()) {
+    if (publishedOnly && event.status !== 'published') continue;
+    let cheapest = null;
+    let totalLeft = 0;
+    let totalCap = 0;
+    for (const tid of event.tierIds || []) {
+      const tier = store.tiers.get(tid);
+      if (!tier) continue;
+      const price = tier.priceCents ?? tier.price;
+      if (cheapest === null || price < cheapest) cheapest = price;
+      totalLeft += (tier.capacity - (tier.sold || 0));
+      totalCap += tier.capacity;
+    }
+    summaries.push({
+      id: event.id,
+      title: event.title,
+      city: event.city,
+      venue: event.venue,
+      date: event.date,
+      status: event.status,
+      cheapestPriceCents: cheapest,
+      price: cheapest,
+      totalSeatsLeft: totalLeft,
+      totalCapacity: totalCap
+    });
   }
-  tier.sold += qty;
+  return summaries;
+}
+
+// --- Build 1 booking logic (keep for S06) ---
+export function bookTickets(store, tierId, quantity) {
+  if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 10) {
+    throw new DomainError('Invalid quantity', 'VALIDATION');
+  }
+  const tier = store.tiers.get(tierId);
+  if (!tier) throw new DomainError('Tier not found', 'NOT_FOUND');
+  const left = tier.capacity - tier.sold;
+  if (quantity > left) {
+    throw new DomainError('Sold out', 'SOLD_OUT');
+  }
+  tier.sold += quantity;
+  const bookingId = `bk_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
   const booking = {
-    id: newId(),
-    reference: newReference(),
-    eventId,
+    id: bookingId,
     tierId,
-    quantity: qty,
-    qty,
-    status: 'CONFIRMED',
+    quantity,
+    priceCents: tier.priceCents ?? tier.price,
+    status: 'pending'
   };
-  store.bookings.set(booking.id, booking);
-  store.bookingsByRef.set(booking.reference, booking);
+  store.bookings.set(bookingId, booking);
   return booking;
-}
-
-export function cancelBooking(store, bookingId) {
-  const booking = store.bookings.get(bookingId);
-  if (!booking) throw new DomainError('BOOKING_NOT_FOUND', 'Booking not found');
-  if (booking.status === 'CANCELLED') {
-    throw new DomainError('ALREADY_CANCELLED', 'Already cancelled');
-  }
-  const event = store.events.get(booking.eventId);
-  const tier = event.tiers.find(t => t.id === booking.tierId);
-  tier.sold -= (booking.quantity ?? booking.qty);
-  booking.status = 'CANCELLED';
-  return booking;
-}
-
-export function findBookingByReference(store, reference) {
-  return store.bookingsByRef.get(reference) || null;
-}
-
-export function joinWaitlist(store, eventId, entry = {}) {
-  const event = store.events.get(eventId);
-  if (!event) throw new DomainError('EVENT_NOT_FOUND', 'Event not found');
-  const waitlistEntry = {
-    id: newId(),
-    eventId,
-    createdAt: Date.now(),
-    ...entry
-  };
-  event.waitlist.enqueue(waitlistEntry);
-  return waitlistEntry;
 }
