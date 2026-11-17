@@ -1,18 +1,35 @@
 export class WaitlistQueue {
-  #head = 0;
-  #tail = 0;
-  #items = {};
-  enqueue(item) { this.#items[this.#tail] = item; this.#tail++; }
+  #head = null;
+  #tail = null;
+  #size = 0;
+
+  enqueue(value) {
+    const node = { value, next: null };
+    if (this.#tail) {
+      this.#tail.next = node;
+    } else {
+      this.#head = node;
+    }
+    this.#tail = node;
+    this.#size++;
+  }
+
   dequeue() {
-    if (this.size === 0) return null;
-    const item = this.#items[this.#head];
-    delete this.#items[this.#head];
-    this.#head++;
-    return item;
+    if (!this.#head) return null;
+    const value = this.#head.value;
+    this.#head = this.#head.next;
+    this.#size--;
+    if (!this.#head) this.#tail = null;
+    return value;
   }
+
   peek() {
-    if (this.size === 0) return null;
-    return this.#items[this.#head];
+    return this.#head?.value ?? null;
   }
-  get size() { return this.#tail - this.#head; }
+
+  get size() {
+    return this.#size;
+  }
 }
+
+export const Queue = WaitlistQueue;

@@ -3,10 +3,21 @@ import assert from 'node:assert/strict';
 import { DomainError } from '../src/domain/errors.js';
 import { mergeSort } from '../src/domain/sorting.js';
 import { filterEvents, sortEvents, searchEvents } from '../src/domain/eventSearch.js';
-import { createEvent, addTier, publishEvent, listEventSummaries } from '../src/domain/inventory.js';
+import {
+  addTier,
+  bookTickets,
+  createEvent,
+  createStore,
+  joinWaitlist,
+  listEventSummaries,
+  offerNextOnWaitlist,
+  publishEvent,
+  seatsLeft,
+  unpublishEvent,
+} from '../src/domain/inventory.js';
 
 function makeStore() {
-  return { events: new Map(), tiers: new Map() };
+  return createStore();
 }
 
 // --- sorting.js ---
@@ -29,6 +40,7 @@ test('S02 create event draft', () => {
   const store = makeStore();
   const ev = createEvent(store, {title:'Lagos Tech', city:'Lagos', venue:'Hall', date:'2026-12-01'});
   assert.equal(ev.status, 'draft');
+  assert.ok(ev.id);
   const list = listEventSummaries(store, {publishedOnly:true});
   assert.equal(list.length, 0);
 });
@@ -36,7 +48,10 @@ test('S02 create event draft', () => {
 test('S02 validation', () => {
   const store = makeStore();
   assert.throws(() => createEvent(store, {title:'', city:'Lagos', venue:'H', date:'2026-12-01'}), err => err.code === 'VALIDATION');
+  assert.throws(() => createEvent(store, {title:'T', city:'', venue:'H', date:'2026-12-01'}), err => err.code === 'VALIDATION');
   assert.throws(() => createEvent(store, {title:'T', city:'Lagos', venue:'H', date:'not-a-date'}), err => err.code === 'VALIDATION');
+  assert.throws(() => createEvent(store, {title:'T', city:'Lagos', venue:'H', date:'2026-02-31'}), err => err.code === 'VALIDATION');
+  assert.equal(store.events.size, 0);
 });
 
 // --- S03 ---
@@ -45,6 +60,7 @@ test('S03 add tier', () => {
   const ev = createEvent(store, {title:'T', city:'Lagos', venue:'H', date:'2026-12-01'});
   const tier = addTier(store, ev.id, {name:'General', priceCents:500000, capacity:100});
   assert.equal(tier.sold, 0);
+  assert.equal(seatsLeft(tier), 100);
 });
 
 test('S03 validation price and capacity', () => {
@@ -67,6 +83,9 @@ test('S04 publish needs tiers', () => {
   addTier(store, ev.id, {name:'G', priceCents:100, capacity:10});
   const pub = publishEvent(store, ev.id);
   assert.equal(pub.status, 'published');
+  assert.equal(listEventSummaries(store).length, 1);
+  assert.equal(unpublishEvent(store, ev.id).status, 'draft');
+  assert.equal(listEventSummaries(store).length, 0);
 });
 
 // --- S05 search/filter/sort ---
@@ -82,6 +101,7 @@ test('S05 search q case-insensitive', () => {
   const res = filterEvents(sampleSummaries(), {q:'JAZZ'});
   assert.equal(res.length, 1);
   assert.equal(res[0].title, 'Abuja Jazz Night');
+  assert.equal(filterEvents(sampleSummaries(), {q:'jazz hall'})[0].id, '2');
 });
 
 test('S05 filter city case-insensitive', () => {
@@ -90,27 +110,56 @@ test('S05 filter city case-insensitive', () => {
 });
 
 test('S05 maxPrice and sort by price', () => {
-  const res = searchEvents(sampleSummaries(), {maxPriceCents:60000}, 'price');
-  assert.equal(res[0].cheapestPriceCents, 20000);
+  const summaries = [
+    ...sampleSummaries(),
+    {id:'4', title:'No tier', city:'Lagos', venue:'', date:'2026-12-07', cheapestPriceCents:null, totalSeatsLeft:3},
+  ];
+  const res = searchEvents(summaries, {maxPriceCents:60000}, 'price');
+  assert.deepEqual(res.map(event => event.id), ['3', '1']);
 });
 
 test('S05 sort by date stable title tie-breaker', () => {
   const list = [
     {id:'b', title:'B Event', city:'Lagos', venue:'', date:'2026-12-05T10:00:00.000Z', cheapestPriceCents:100, totalSeatsLeft:1},
     {id:'a', title:'A Event', city:'Lagos', venue:'', date:'2026-12-05T10:00:00.000Z', cheapestPriceCents:100, totalSeatsLeft:1},
+    {id:'c', title:'C Event', city:'Lagos', venue:'', date:'2026-12-04T10:00:00.000Z', cheapestPriceCents:100, totalSeatsLeft:1},
   ];
   const sorted = sortEvents(list, 'date');
-  assert.equal(sorted[0].title, 'A Event');
+  assert.deepEqual(sorted.map(event => event.id), ['c', 'a', 'b']);
+  const identicalTitles = [
+    {id:'z', title:'Same', date:'2026-12-01'},
+    {id:'a', title:'Same', date:'2026-12-01'},
+  ];
+  assert.deepEqual(sortEvents(identicalTitles, 'date').map(event => event.id), ['a', 'z']);
+});
+
+test('S05 availability sort and empty results', () => {
+  assert.deepEqual(sortEvents(sampleSummaries(), 'availability').map(event => event.id), ['3', '1', '2']);
+  assert.deepEqual(searchEvents([], {}, 'date'), []);
+  const soldOut = {id:'4', title:'Sold Out', city:'Lagos', venue:'', date:'2026-12-07', cheapestPriceCents:100, totalSeatsLeft:0};
+  assert.deepEqual(filterEvents([...sampleSummaries(), soldOut], {onlyAvailable:true}).map(event => event.id), ['1', '2', '3']);
+});
+
+test('S05 price sorting puts no-price events last and resolves ties deterministically', () => {
+  const list = [
+    {id:'b', title:'B event', date:'2026-12-01', cheapestPriceCents:100},
+    {id:'a', title:'A event', date:'2026-12-01', cheapestPriceCents:100},
+    {id:'c', title:'C event', date:'2026-12-01', cheapestPriceCents:null},
+  ];
+  assert.deepEqual(sortEvents(list, 'price').map(event => event.id), ['a', 'b', 'c']);
 });
 
 test('S05 date to inclusive', () => {
   const res = filterEvents(sampleSummaries(), {to:'2026-12-05'});
   assert.equal(res.length, 2); // both on Dec 5 at 5pm and 10am included
+  assert.equal(filterEvents(sampleSummaries(), {from:'2026-12-06'}).length, 1);
 });
 
 test('S05 validation bad date and bad sort', () => {
   assert.throws(() => filterEvents(sampleSummaries(), {from:'bad-date'}), e => e.code==='VALIDATION');
+  assert.throws(() => filterEvents(sampleSummaries(), {from:'2026-02-31'}), e => e.code==='VALIDATION');
   assert.throws(() => filterEvents(sampleSummaries(), {maxPriceCents:10.5}), e => e.code==='VALIDATION');
+  assert.throws(() => filterEvents(sampleSummaries(), {maxPriceCents:-1}), e => e.code==='VALIDATION');
   assert.throws(() => sortEvents(sampleSummaries(), 'unknown'), e => e.code==='VALIDATION');
 });
 
@@ -122,8 +171,44 @@ test('S05 original list unchanged', () => {
   assert.deepEqual(orig, copy);
 });
 
-// S06 booking already tested in Build1 but add validation check
-test('S06 quantity validation uses existing inventory booking', () => {
-  // This test ensures error codes exist - actual booking tested in inventory
-  assert.ok(true);
+test('S06 booking creates a pending booking, calculates cents, and reserves seats', () => {
+  const store = makeStore();
+  const event = createEvent(store, {title:'T', city:'Lagos', date:'2026-12-01'});
+  const tier = addTier(store, event.id, {name:'General', priceCents:5000, capacity:3});
+  publishEvent(store, event.id);
+
+  const booking = bookTickets(store, tier.id, 'attendee-1', 2);
+  assert.equal(booking.status, 'pending');
+  assert.equal(booking.quantity, 2);
+  assert.equal(booking.amountCents, 10000);
+  assert.equal(seatsLeft(tier), 1);
+});
+
+test('S06 sold-out booking fails without changing inventory or bookings', () => {
+  const store = makeStore();
+  const event = createEvent(store, {title:'T', city:'Lagos', date:'2026-12-01'});
+  const tier = addTier(store, event.id, {name:'General', priceCents:5000, capacity:3});
+  bookTickets(store, tier.id, 'attendee-1', 2);
+
+  assert.throws(
+    () => bookTickets(store, tier.id, 'attendee-2', 2),
+    error => error.code === 'SOLD_OUT'
+  );
+  assert.equal(tier.sold, 2);
+  assert.equal(store.bookings.size, 1);
+});
+
+test('S06 rejects every invalid quantity', () => {
+  const store = makeStore();
+  const event = createEvent(store, {title:'T', city:'Lagos', date:'2026-12-01'});
+  const tier = addTier(store, event.id, {name:'General', priceCents:5000, capacity:20});
+
+  for (const quantity of [0, -1, 1.5, 11]) {
+    assert.throws(
+      () => bookTickets(store, tier.id, 'attendee-1', quantity),
+      error => error.code === 'VALIDATION'
+    );
+  }
+  assert.equal(tier.sold, 0);
+  assert.equal(store.bookings.size, 0);
 });
