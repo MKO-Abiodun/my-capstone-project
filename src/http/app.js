@@ -14,11 +14,12 @@ const MIME_TYPES = new Map([
   ['.txt', 'text/plain; charset=utf-8']
 ]);
 
-export function createApp({ publicDir = DEFAULT_PUBLIC_DIR } = {}) {
-  const router = createRouter();
-  router.add('GET', '/health', (_request, response) => {
-    sendJson(response, 200, { status: 'ok' });
-  });
+export function createApp({ publicDir = DEFAULT_PUBLIC_DIR, router = createRouter() } = {}) {
+  if (!router.match('GET', '/health')) {
+    router.add('GET', '/health', (_request, response) => {
+      sendJson(response, 200, { status: 'ok' });
+    });
+  }
 
   return createServer(async (request, response) => {
     try {
@@ -27,6 +28,16 @@ export function createApp({ publicDir = DEFAULT_PUBLIC_DIR } = {}) {
 
       const matched = router.match(request.method, requestUrl.pathname);
       if (matched) {
+        if (matched.handler.length <= 1) {
+          const result = await matched.handler({ request, response, params: matched.params, body: request.body });
+          if (result && typeof result === 'object' && 'status' in result && 'body' in result) {
+            sendJson(response, result.status, result.body);
+          } else if (result !== undefined) {
+            sendJson(response, 200, result);
+          }
+          return;
+        }
+
         await matched.handler(request, response, matched.params);
         return;
       }
@@ -63,9 +74,31 @@ export function createApp({ publicDir = DEFAULT_PUBLIC_DIR } = {}) {
         return;
       }
 
+      if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
+        sendError(response, mapDomainErrorStatus(error.code), error.code, error.message || 'Request failed');
+        return;
+      }
+
       sendError(response, 500, 'INTERNAL_SERVER_ERROR', 'Internal server error');
     }
   });
+}
+
+function mapDomainErrorStatus(code) {
+  switch (code) {
+    case 'VALIDATION':
+    case 'PAYMENT_DECLINED':
+    case 'INVALID_TRANSITION':
+    case 'INVALID_STATE':
+    case 'SOLD_OUT':
+      return 400;
+    case 'FORBIDDEN':
+      return 403;
+    case 'NOT_FOUND':
+      return 404;
+    default:
+      return 500;
+  }
 }
 
 async function readJsonBody(request) {

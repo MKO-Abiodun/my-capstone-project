@@ -11,6 +11,13 @@ import {
   assertTransition,
   canTransition
 } from '../src/domain/bookingStateMachine.js';
+import {
+  addTier,
+  bookTickets,
+  createEvent,
+  createStore,
+} from '../src/domain/inventory.js';
+import { createUser } from '../src/domain/user.js';
 
 test('booking state machine permits exactly the documented transitions', () => {
   const allowed = Object.entries(BOOKING_TRANSITIONS)
@@ -38,6 +45,27 @@ test('state machine rejects unknown states', () => {
   assert.throws(
     () => assertTransition('unknown', 'paid'),
     error => error.code === 'INVALID_TRANSITION'
+  );
+});
+
+test('events and bookings carry explicit user domain entities', () => {
+  const store = createStore();
+  const event = createEvent(store, {
+    title: 'Design Conf',
+    city: 'Lagos',
+    startsAt: '2026-12-10T09:00:00Z',
+    organizerId: 'org-42',
+  });
+  addTier(store, event.id, { name: 'VIP', priceCents: 5000, capacity: 10 });
+
+  const booking = bookTickets(store, event.tierIds[0], 'attendee-7', 2);
+
+  assert.deepEqual(event.organizer, { id: 'org-42', name: 'org-42', role: 'organizer' });
+  assert.deepEqual(booking.attendee, { id: 'attendee-7', name: 'attendee-7', role: 'attendee' });
+  assert.equal(createUser({ id: 'u-1', name: 'Dora', role: 'admin' }).role, 'admin');
+  assert.throws(
+    () => createUser({ id: '', name: 'Dora', role: 'attendee' }),
+    error => error.code === 'VALIDATION'
   );
 });
 

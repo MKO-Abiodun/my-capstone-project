@@ -1,80 +1,66 @@
-import { DomainError } from './errors.js';
 import { mergeSort } from './sorting.js';
+import { DomainError } from './errors.js';
+import { parseIsoDate } from './dates.js';
 
-function parseDateInclusive(str, isEnd) {
-  if (!str) return null;
-  const d = new Date(str);
-  if (isNaN(d.getTime())) throw new DomainError('Invalid date', 'VALIDATION');
-  if (isEnd && /^\d{4}-\d{2}-\d{2}$/.test(str)) {
-    // date-only 'to' includes whole day
-    d.setUTCHours(23,59,59,999);
-  }
-  return d;
+function getStartsAt(event) {
+  return event.startsAt ?? event.date ?? null;
+}
+
+function getMinPriceCents(event) {
+  return event.minPriceCents ?? event.cheapestPriceCents ?? event.price ?? event.priceCents ?? null;
+}
+
+function getSeatsLeft(event) {
+  return event.seatsLeft ?? event.totalSeatsLeft ?? 0;
 }
 
 export function filterEvents(summaries, { q, city, from, to, maxPriceCents, onlyAvailable } = {}) {
-  if (maxPriceCents !== undefined && !Number.isInteger(maxPriceCents)) {
-    throw new DomainError('Invalid price', 'VALIDATION');
+  const text = q?.trim().toLowerCase();
+  const wantedCity = city?.trim().toLowerCase();
+  const fromTime = from ? parseIsoDate(from, 'from') : undefined;
+  const toTime = to ? parseIsoDate(to, 'to', { endOfDay: true }) : undefined;
+
+  if (maxPriceCents !== undefined && (!Number.isInteger(maxPriceCents) || maxPriceCents < 0)) {
+    throw new DomainError('VALIDATION', 'maxPriceCents must be a whole number of cents');
   }
-  // validate dates early
-  if (from) parseDateInclusive(from, false);
-  if (to) parseDateInclusive(to, true);
 
-  const fromDate = from ? parseDateInclusive(from, false) : null;
-  const toDate = to ? parseDateInclusive(to, true) : null;
+  return summaries.filter((event) => {
+    if (text && !`${event.title} ${event.venue || ''}`.toLowerCase().includes(text)) return false;
+    if (wantedCity && (event.city || '').toLowerCase() !== wantedCity) return false;
 
-  const qLower = q ? q.toLowerCase().trim() : null;
-  const cityLower = city ? city.toLowerCase().trim() : null;
+    const startsAt = new Date(getStartsAt(event)).getTime();
+    if (fromTime !== undefined && startsAt < fromTime) return false;
+    if (toTime !== undefined && startsAt > toTime) return false;
 
-  const filtered = summaries.filter(ev => {
-    if (qLower) {
-      const inTitle = ev.title.toLowerCase().includes(qLower);
-      const inVenue = (ev.venue || '').toLowerCase().includes(qLower);
-      if (!inTitle && !inVenue) return false;
-    }
-    if (cityLower && ev.city.toLowerCase() !== cityLower) return false;
-    if (fromDate && new Date(ev.date) < fromDate) return false;
-    if (toDate && new Date(ev.date) > toDate) return false;
-    if (maxPriceCents !== undefined) {
-      if (ev.cheapestPriceCents == null) return false;
-      if (ev.cheapestPriceCents > maxPriceCents) return false;
-    }
-    if (onlyAvailable && ev.totalSeatsLeft <= 0) return false;
+    const minPriceCents = getMinPriceCents(event);
+    if (maxPriceCents !== undefined && (minPriceCents === null || minPriceCents > maxPriceCents)) return false;
+    if (onlyAvailable && getSeatsLeft(event) <= 0) return false;
     return true;
   });
-
-  return [...filtered]; // new array, never modify original
 }
 
-export function sortEvents(summaries, sortBy) {
-  if (!['date','price','availability'].includes(sortBy)) {
-    throw new DomainError('Invalid sort', 'VALIDATION');
+const compareText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const byTitleThenId = (a, b) => compareText((a.title || '').toLowerCase(), (b.title || '').toLowerCase()) || compareText(a.id, b.id);
+
+const SORTERS = {
+  date: (a, b) => compareText(getStartsAt(a), getStartsAt(b)) || byTitleThenId(a, b),
+  price: (a, b) => {
+    const priceA = getMinPriceCents(a) ?? Infinity;
+    const priceB = getMinPriceCents(b) ?? Infinity;
+    return (priceA === priceB ? 0 : priceA < priceB ? -1 : 1) || byTitleThenId(a, b);
+  },
+  availability: (a, b) => getSeatsLeft(b) - getSeatsLeft(a) || byTitleThenId(a, b),
+};
+
+export const SORT_OPTIONS = Object.keys(SORTERS);
+
+export function sortEvents(summaries, sortBy = 'date') {
+  if (!Object.hasOwn(SORTERS, sortBy)) {
+    throw new DomainError('VALIDATION', `sort must be one of: ${SORT_OPTIONS.join(', ')}`);
   }
-
-  const compare = (a,b) => {
-    let primary = 0;
-    if (sortBy === 'date') {
-      primary = new Date(a.date) - new Date(b.date);
-    } else if (sortBy === 'price') {
-      const pa = a.cheapestPriceCents == null ? Infinity : a.cheapestPriceCents;
-      const pb = b.cheapestPriceCents == null ? Infinity : b.cheapestPriceCents;
-      primary = pa - pb;
-    } else if (sortBy === 'availability') {
-      primary = b.totalSeatsLeft - a.totalSeatsLeft; // most first
-    }
-    if (primary !== 0) return primary;
-    // tie breakers: title, then id
-    const t = a.title.localeCompare(b.title);
-    if (t !== 0) return t;
-    return a.id.localeCompare(b.id);
-  };
-
-  // use our own mergeSort - must not mutate original
-  return mergeSort(summaries, compare);
+  return mergeSort(summaries, SORTERS[sortBy]);
 }
 
-export function searchEvents(summaries, criteria, sortBy) {
-  const filtered = filterEvents(summaries, criteria);
-  if (!sortBy) return filtered;
-  return sortEvents(filtered, sortBy);
+export function searchEvents(summaries, criteria = {}, sortBy = 'date') {
+  return sortEvents(filterEvents(summaries, criteria), sortBy);
 }

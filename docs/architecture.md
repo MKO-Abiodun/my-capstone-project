@@ -13,6 +13,7 @@ flowchart TD
 - **Routes** translate HTTP requests and responses; they do not contain business rules or access storage directly.
 - **Services** coordinate use cases and repositories; they do not implement transport details or bypass domain rules.
 - **Rules** enforce domain behavior and state transitions; they do not know about HTTP or persistence.
+- Shared input validation lives in `src/domain/validation.js`; HTTP routes call it before forwarding validated values to services.
 - **Repositories** load and save data; they do not make business decisions or call routes/services.
 - **Data** is the persisted or in-memory state; it does not initiate calls into other layers.
 

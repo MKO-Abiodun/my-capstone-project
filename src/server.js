@@ -1,7 +1,8 @@
 import { createApp } from './http/app.js';
+import { createApiRouter } from './http/api.js';
 import { config } from './config.js';
 
-const server = createApp();
+const server = createApp({ router: createApiRouter() });
 
 server.listen(config.port, () => {
   const address = server.address();
