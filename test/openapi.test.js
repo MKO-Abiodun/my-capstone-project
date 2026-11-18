@@ -3,6 +3,21 @@ import assert from 'node:assert/strict';
 import openapi from '../src/http/openapi.js';
 import { createApp } from '../src/http/app.js';
 import { createApiRouter } from '../src/http/api.js';
+import { createMemoryRepository } from '../src/repositories/memory.js';
+import { createMockPaymentGateway } from '../src/gateways/mockPaymentGateway.js';
+import { createEventService } from '../src/services/eventService.js';
+import { createBookingService } from '../src/services/bookingService.js';
+
+function createTestApiRouter() {
+  const repository = createMemoryRepository();
+  return createApiRouter({
+    eventService: createEventService({ repository }),
+    bookingService: createBookingService({
+      repository,
+      paymentGateway: createMockPaymentGateway(),
+    }),
+  });
+}
 
 test('OpenAPI document describes the implemented HTTP endpoints', () => {
   assert.equal(openapi.openapi, '3.1.0');
@@ -23,7 +38,7 @@ test('OpenAPI document describes the implemented HTTP endpoints', () => {
 });
 
 test('HTTP server serves the OpenAPI document for Scalar', async t => {
-  const server = createApp({ router: createApiRouter() });
+  const server = createApp({ router: createTestApiRouter() });
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);

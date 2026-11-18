@@ -147,6 +147,13 @@ export function seatsLeft(tier) {
   return tier.capacity - (tier.sold || 0);
 }
 
+export function validateBookingQuantity(quantity) {
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_TICKETS_PER_BOOKING) {
+    throw new DomainError('VALIDATION', `quantity must be between 1 and ${MAX_TICKETS_PER_BOOKING}`);
+  }
+  return quantity;
+}
+
 export function bookTickets(store, tierId, userId, quantity) {
   const tier = getTier(store, tierId);
 
@@ -157,9 +164,7 @@ export function bookTickets(store, tierId, userId, quantity) {
     finalUserId = 'anonymous';
   }
 
-  if (!Number.isInteger(finalQuantity) || finalQuantity < 1 || finalQuantity > MAX_TICKETS_PER_BOOKING) {
-    throw new DomainError('VALIDATION', `quantity must be between 1 and ${MAX_TICKETS_PER_BOOKING}`);
-  }
+  validateBookingQuantity(finalQuantity);
 
   const left = seatsLeft(tier);
   if (left < finalQuantity) {

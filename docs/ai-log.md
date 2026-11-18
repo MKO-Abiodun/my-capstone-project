@@ -23,3 +23,15 @@
 - **Asked:** Complete the in-memory API for event and booking workflows.
 - **Came back:** The payment gateway received card data, unpublishing was not reachable through the API, and important API acceptance cases were untested.
 - **Review and changes:** The HTTP boundary now turns the mock card input into a decline flag; the gateway receives only the amount and that flag. Added the unpublish endpoint, API examples, and integration tests for validation, search, booking, ownership, cancellation, and repeat payment.
+
+## Build 5
+
+- **Asked:** Replace volatile production storage with SQLite and prevent concurrent requests from overselling a ticket tier.
+- **Came back:** Added a parameterized SQLite repository, schema constraints, a persistent production server, seeding and oversell demos, and concurrency and restart-persistence tests.
+- **Review and changes:** The initial payment service updated only a returned in-memory object, which would not persist with SQLite. Changed it to call an explicit repository update after successful mock payment; tests cover persistence of payment status as well as inventory and event data.
+
+## Architecture alignment
+
+- **Asked:** Apply the documented separation of HTTP routes, services, domain rules, repositories, and persistence.
+- **Came back:** Domain use cases had been delegated to repository methods, API routing constructed default infrastructure, and the payment adapter lived in a generic `lib` folder.
+- **Review and changes:** Moved event and booking decisions into services using domain rules; repositories now expose persistence operations, API routing receives its dependencies, and the mock gateway lives under `src/gateways/`.

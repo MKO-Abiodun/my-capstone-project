@@ -1,7 +1,3 @@
-import { createMemoryRepository } from '../repositories/memory.js';
-import { createMockPaymentGateway } from '../lib/mockPaymentGateway.js';
-import { createEventService } from '../services/eventService.js';
-import { createBookingService } from '../services/bookingService.js';
 import { createRouter } from './router.js';
 import openapi from './openapi.js';
 import {
@@ -25,12 +21,10 @@ function shouldDeclineMockPayment(body) {
   return !value || ['declined', 'fail', 'invalid'].some(marker => value.includes(marker));
 }
 
-export function createApiRouter({
-  repository = createMemoryRepository(),
-  paymentGateway = createMockPaymentGateway(),
-} = {}) {
-  const eventService = createEventService({ repository });
-  const bookingService = createBookingService({ repository, paymentGateway });
+export function createApiRouter({ eventService, bookingService } = {}) {
+  if (!eventService || !bookingService) {
+    throw new TypeError('The API router requires event and booking services');
+  }
 
   const router = createRouter();
 
