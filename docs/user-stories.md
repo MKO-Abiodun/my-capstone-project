@@ -1,4 +1,4 @@
-# Builds 1–4 user stories
+# Builds 1–5 user stories
 
 ## S02: Create an event
 
@@ -50,6 +50,16 @@ As an attendee, I want to pay for a booking with mock payment so that it becomes
 - A declined payment returns `PAYMENT_DECLINED` without changing the pending booking.
 - Cancelled bookings cannot be paid, and a paid booking cannot be charged again.
 - A caller cannot pay another attendee's booking.
+
+## S08: Prevent overselling
+
+As an attendee, I want to be certain the last ticket is sold to only one person
+so that nobody turns up to a full event.
+
+- Given exactly one seat remains, when 50 attendees try to book at the same
+  time, exactly one booking succeeds and 49 receive `SOLD_OUT`.
+- The tier's sold count never exceeds its capacity.
+- Removing the atomic database reservation causes the overselling test to fail.
 
 ## S16: Run tests
 

@@ -2,6 +2,19 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/http/app.js';
 import { createApiRouter } from '../src/http/api.js';
+import { createMemoryRepository } from '../src/repositories/memory.js';
+import { createMockPaymentGateway } from '../src/gateways/mockPaymentGateway.js';
+import { createEventService } from '../src/services/eventService.js';
+import { createBookingService } from '../src/services/bookingService.js';
+
+function createTestApiRouter(options = {}) {
+  const repository = options.repository ?? createMemoryRepository();
+  const paymentGateway = options.paymentGateway ?? createMockPaymentGateway();
+  return createApiRouter({
+    eventService: createEventService({ repository }),
+    bookingService: createBookingService({ repository, paymentGateway }),
+  });
+}
 
 async function createEventWithTier(baseUrl, {
   title = 'API Acceptance Event',
@@ -48,7 +61,7 @@ async function createBooking(baseUrl, { userId = 'attendee-test', quantity = 1, 
 }
 
 describe('Build 4 API', () => {
-  const app = createApp({ router: createApiRouter() });
+  const app = createApp({ router: createTestApiRouter() });
   let baseUrl;
 
   before(async () => {
@@ -422,7 +435,7 @@ describe('Build 4 API', () => {
         return { ok: true };
       },
     };
-    const app = createApp({ router: createApiRouter({ paymentGateway }) });
+    const app = createApp({ router: createTestApiRouter({ paymentGateway }) });
     await new Promise((resolve, reject) => {
       app.once('error', reject);
       app.listen(0, '127.0.0.1', resolve);
